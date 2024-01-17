@@ -24,6 +24,7 @@ const (
 	fieldImportPaths    = "import_paths"
 	fieldDiscardUnknown = "discard_unknown"
 	fieldUseProtoNames  = "use_proto_names"
+	fieldIsDeterministic = "is_deterministic"
 )
 
 func protobufProcessorSpec() *service.ConfigSpec {
@@ -56,6 +57,9 @@ Attempts to create a target protobuf message from a generic JSON structure.
 			Default(false),
 		service.NewBoolField(fieldUseProtoNames).
 			Description("If `true`, the `to_json` operator deserializes fields exactly as named in schema file.").
+			Default(false),
+		service.NewBoolField(fieldIsDeterministic).
+			Description("If true, from_json serializes data using the protobuf deterministic flag. See more https://pkg.go.dev/google.golang.org/protobuf/proto#MarshalOptions").
 			Default(false),
 		service.NewStringListField(fieldImportPaths).
 			Description("A list of directories containing .proto files, including all definitions required for parsing the target message. If left empty the current directory is used. Each directory listed will be walked with all found .proto files imported.").
@@ -198,7 +202,7 @@ func newProtobufToJSONOperator(f ifs.FS, msg string, importPaths []string, usePr
 	}, nil
 }
 
-func newProtobufFromJSONOperator(f ifs.FS, msg string, importPaths []string, discardUnknown bool) (protobufOperator, error) {
+func newProtobufFromJSONOperator(f ifs.FS, msg string, importPaths []string, discardUnknown bool, isDeterministic bool) (protobufOperator, error) {
 	if msg == "" {
 		return nil, errors.New("message field must not be empty")
 	}
@@ -233,7 +237,7 @@ func newProtobufFromJSONOperator(f ifs.FS, msg string, importPaths []string, dis
 			return fmt.Errorf("failed to unmarshal JSON message '%v': %w", msg, err)
 		}
 
-		data, err := proto.Marshal(dynMsg)
+		data, err := proto.MarshalOptions{Deterministic: isDeterministic}.Marshal(dynMsg)
 		if err != nil {
 			return fmt.Errorf("failed to marshal protobuf message '%v': %v", msg, err)
 		}
@@ -243,12 +247,12 @@ func newProtobufFromJSONOperator(f ifs.FS, msg string, importPaths []string, dis
 	}, nil
 }
 
-func strToProtobufOperator(f ifs.FS, opStr, message string, importPaths []string, discardUnknown bool, useProtoNames bool) (protobufOperator, error) {
+func strToProtobufOperator(f ifs.FS, opStr, message string, importPaths []string, discardUnknown bool, useProtoNames bool, isDeterministic bool) (protobufOperator, error) {
 	switch opStr {
 	case "to_json":
 		return newProtobufToJSONOperator(f, message, importPaths, useProtoNames)
 	case "from_json":
-		return newProtobufFromJSONOperator(f, message, importPaths, discardUnknown)
+		return newProtobufFromJSONOperator(f, message, importPaths, discardUnknown, isDeterministic)
 	}
 	return nil, fmt.Errorf("operator not recognised: %v", opStr)
 }
@@ -316,7 +320,12 @@ func newProtobuf(conf *service.ParsedConfig, mgr *service.Resources) (*protobufP
 		return nil, err
 	}
 
-	if p.operator, err = strToProtobufOperator(mgr.FS(), operatorStr, message, importPaths, discardUnknown, useProtoNames); err != nil {
+	var isDeterministic bool
+	if isDeterministic, err = conf.FieldBool(fieldIsDeterministic); err != nil {
+		return nil, err
+	}
+
+	if p.operator, err = strToProtobufOperator(mgr.FS(), operatorStr, message, importPaths, discardUnknown, useProtoNames, isDeterministic); err != nil {
 		return nil, err
 	}
 	return p, nil
